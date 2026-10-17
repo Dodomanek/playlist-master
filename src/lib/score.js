@@ -33,29 +33,46 @@ export const DEFAULT_OPTIONS = {
   minKeyScore: 0, // 0 = povolit vše, 0.4 = jen kompatibilní klíče
 };
 
+export function relativeBpmDelta(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return null;
+  return Math.abs(a - b) / Math.min(a, b);
+}
+
+/** Relativní odchylka od přesného půl/dvojnásobku tempa (0 = přesně 2×). */
+export function foldedBpmDelta(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return null;
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  const doubled = lo * 2;
+  return Math.abs(hi - doubled) / Math.min(hi, doubled);
+}
+
+const BPM_TABLE = [
+  [0.005, 1],
+  [0.01, 0.97],
+  [0.02, 0.9],
+  [0.04, 0.75],
+  [0.06, 0.55],
+  [0.09, 0.3],
+  [0.14, 0.12],
+];
+
+function lookupBpm(rel) {
+  for (const [limit, value] of BPM_TABLE) if (rel <= limit) return value;
+  return 0.05;
+}
+
 export function bpmScore(a, b, options = {}) {
   const { allowHalfDouble = true } = options;
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return 0.5;
-  const rel = Math.abs(a - b) / Math.min(a, b);
-  const ratio = Math.max(a, b) / Math.min(a, b);
-  const harmonic = allowHalfDouble && ratio > 1.9 && ratio < 2.1;
-  const table = [
-    [0.005, 1],
-    [0.01, 0.97],
-    [0.02, 0.9],
-    [0.04, 0.75],
-    [0.06, 0.55],
-    [0.09, 0.3],
-    [0.14, 0.12],
-  ];
-  let score = 0.05;
-  for (const [limit, value] of table) {
-    if (rel <= limit) {
-      score = value;
-      break;
-    }
+  const direct = relativeBpmDelta(a, b);
+  if (direct == null) return 0.5;
+  let score = lookupBpm(direct);
+  if (allowHalfDouble) {
+    const folded = foldedBpmDelta(a, b);
+    // půl/dvojnásobek je o něco horší než stejné tempo
+    if (folded != null) score = Math.max(score, lookupBpm(folded) * 0.85);
   }
-  return harmonic ? Math.max(score, 0.8) : score;
+  return score;
 }
 
 export function energyScore(a, b) {
@@ -111,11 +128,6 @@ export function metaScore(a, b) {
   return signals.reduce((x, y) => x + y, 0) / signals.length;
 }
 
-export function relativeBpmDelta(a, b) {
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return null;
-  return Math.abs(a - b) / Math.min(a, b);
-}
-
 /**
  * Ohodnotí dvojici tracků. Vrací { score, parts, hardFail, failReason }.
  * `parts` je rozpad 0..1 pro jednotlivé složky (pro UI).
@@ -140,10 +152,12 @@ export function scorePair(from, to, weights = DEFAULT_WEIGHTS, options = {}) {
   // Tvrdá pravidla
   let hardFail = false;
   let failReason = null;
-  const rel = relativeBpmDelta(a.bpm, b.bpm);
-  const ratio = a.bpm && b.bpm ? Math.max(a.bpm, b.bpm) / Math.min(a.bpm, b.bpm) : null;
-  const harmonic = opts.allowHalfDouble && ratio && ratio > 1.9 && ratio < 2.1;
-  if (rel != null && rel * 100 > opts.maxBpmJumpPct && !harmonic) {
+
+  // Skok BPM se měří i proti půl/dvojnásobku, takže 174 → 83 už neprojde jako 174 → 87.
+  const direct = relativeBpmDelta(a.bpm, b.bpm);
+  const folded = opts.allowHalfDouble ? foldedBpmDelta(a.bpm, b.bpm) : null;
+  const rel = direct == null ? null : Math.min(direct, folded ?? direct);
+  if (rel != null && rel * 100 > opts.maxBpmJumpPct) {
     hardFail = true;
     failReason = `BPM skok ${(rel * 100).toFixed(1)} %`;
   }
@@ -171,7 +185,6 @@ export function scorePair(from, to, weights = DEFAULT_WEIGHTS, options = {}) {
     wsum += w;
   }
   const score = wsum > 0 ? acc / wsum : 0;
-
   return { score, parts, hardFail, failReason };
 }
 
@@ -183,15 +196,17 @@ export function explainPair(from, to, result) {
   if (result.parts.key >= 0.9) notes.push(`klíče ${keyA} → ${keyB} sedí`);
   else if (result.parts.key >= 0.7) notes.push(`klíče ${keyA} → ${keyB} hrají spolu`);
   else if (result.parts.key < 0.4) notes.push(`klíče ${keyA} → ${keyB} jsou mimo`);
+
   const da = (from.features || {}).bpm;
   const db = (to.features || {}).bpm;
   if (Number.isFinite(da) && Number.isFinite(db)) {
-    const rel = Math.abs(da - db) / Math.min(da, db);
-    const ratio = Math.max(da, db) / Math.min(da, db);
-    if (ratio > 1.9 && ratio < 2.1 && rel > 0.1) notes.push(`půl/dvojnásobek tempa (${da} → ${db})`);
+    const rel = relativeBpmDelta(da, db);
+    const folded = foldedBpmDelta(da, db);
+    if (folded != null && folded <= 0.06 && rel > 0.1) notes.push(`půl/dvojnásobek tempa (${da} → ${db})`);
     else if (rel * 100 <= 2) notes.push(`tempo skoro stejné (${da} → ${db})`);
     else if (rel * 100 > 6) notes.push(`tempo uskočilo o ${(rel * 100).toFixed(1)} %`);
   }
+
   const ea = (from.features || {}).energy;
   const eb = (to.features || {}).energy;
   if (Number.isFinite(ea) && Number.isFinite(eb)) {
@@ -199,7 +214,9 @@ export function explainPair(from, to, result) {
     if (diff >= 12) notes.push('energie nahoru');
     else if (diff <= -12) notes.push('energie dolů');
   }
+
   const shared = ((from.features || {}).tags || []).filter((t) => ((to.features || {}).tags || []).includes(t));
   if (shared.length) notes.push(`společné tagy: ${shared.slice(0, 3).join(', ')}`);
+
   return notes.join(' · ');
 }
