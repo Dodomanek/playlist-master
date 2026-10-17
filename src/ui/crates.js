@@ -66,6 +66,10 @@ export function cratesPanel(ctx) {
           <input type="checkbox" data-setting="crates.keepSmall" ${config.keepSmall ? 'checked' : ''} />
           Nechávat i malé playlisty
         </label>
+        <label class="check" title="Kolekce obsahuje aspoň 25 % DnB → rozdělí se samostatně na Neurofunk, Deep DnB, Jungle, Liquid… a zbytek kolekce jde zvlášť.">
+          <input type="checkbox" data-setting="crates.splitByDnb" ${config.splitByDnb !== false ? 'checked' : ''} />
+          Rozdělit DnB podle subžánru
+        </label>
         <div class="field">
           <label for="crate-seed">Semínko (stejné = stejný výsledek)</label>
           <input id="crate-seed" type="text" value="${esc(config.randomSeed)}" data-setting="crates.randomSeed" />

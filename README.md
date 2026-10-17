@@ -109,7 +109,7 @@ Hodí se pro dávkové zpracování nebo když chceš výsledek rovnou zapsat do
 ## Vývoj a testy
 
 ```bash
-npm test          # 41 testů: engine, UI tok v jsdom, export XML round-trip
+npm test          # 64 testy: engine, UI tok v jsdom, quickie import, měření BPM/klíče, export XML
 npm run fixture   # vygeneruje demo kolekci (fixtures/ + public/demo-collection.xml)
 npm run build     # produkční build do dist/
 ```
@@ -123,6 +123,30 @@ test/         node:test – včetně testů, které odklikají celé UI v jsdom
 cli.mjs       příkazová řádka
 ```
 
+## DnB subžánry (neuro / deep / jungle…)
+
+Když v rozsahu převažuje DnB (aspoň 25 %), tab **Auto playlisty** nejdřív rozdělí tracky podle
+subžánru – Neurofunk, Deep DnB, Liquid, Jungle, Jump Up, Rollers, Halftime, Ostatní DnB – a každý
+subžánr dostane vlastní playlist(y). House, techno a zbytek kolekce jde zvlášť a nikdy se s DnB
+nepromíchá. Přepínač **Rozdělit DnB podle subžánru** najdeš pod možnostmi (výchozí stav: zapnuto).
+Hub­natý tag v komentáři (`#neurofunk`, `#liquid`, `jump up`) nebo žánr tracku k rozpoznání stačí.
+
+## Quickie import (bez XML)
+
+Tab **Quickie import** funguje jako quickiemusic.com: přetáhni do okna rovnou MP3 / FLAC / WAV / M4A
+soubory a o zbytek se postará aplikace:
+
+1. **Vyčistí zmatené názvy** – `01 - Artist_-_Track (320kbps) [www.site.com].mp3`
+   → interpret `Artist`, název `Track`.
+2. **Přečte tagy** – ID3v1/ID3v2.3/2.4 (MP3), Vorbis comment (FLAC), QuickTime `ilst` (M4A/ALAC),
+   RIFF INFO (WAV). Bez tagů použije hádanky z názvu (BPM, Camelot klíč, žánr).
+3. **Změří BPM a tóninu z audia** – Web Audio API: BPM přes autokorelatci onsetů
+   (vč. oktavové korekce 87 ↔ 174), tónina přes chromagram + Krumhansl–Schmuckler profily na
+   Camelot wheel. Detektory jsou čisté funkce a mají vlastní testy na syntetických signálech.
+4. **Rozdělí na playlisty** – podle žánru, u DnB podle subžánru (stejný engine jako Auto playlisty).
+
+Vše zůstává v prohlížeči – soubory se nikam neodesílají.
+
 ## Omezení
 
 - Energie je odhad (rekordbox energii v XML neexportuje) – nauč aplikaci svůj vkus ručními energiemi
@@ -132,3 +156,6 @@ cli.mjs       příkazová řádka
   `<COLLECTION>` a odkazy typu `<TRACK Key="1"/>` metadata nemá – tam je potřeba vyexportovat kolekci.
 - Ze setu se nikdy nestane víc tracků, než kolik jich v rozsahu je; když dojde dech, aplikace to napíše.
 - Zapisuje se jen do XML, které si sám nastavíš v rekordboxu – aplikace nikdy nemění `master.db`.
+- Quickie import: prohlížeč neumí číst cestu k souboru, takže rychle načtené tracky nemají `Location`
+  v XML. Když je rekordbox potřebuje spárovat, doplň cestu ručně, nebo playlist používej jen
+  pro přípravu/sety. ID quickie tracků začínají na 1 000 001, aby nekolidovala s `TrackID` z XML.

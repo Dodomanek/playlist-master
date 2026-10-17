@@ -21,6 +21,8 @@ import {
 } from '../lib/playlists.js';
 import { DEFAULT_OPTIONS, DEFAULT_WEIGHTS, explainPair, scorePair } from '../lib/score.js';
 import { buildDnbCollection } from '../lib/demo.js';
+import { isAudioFile, readTrackFile } from '../lib/quickie.js';
+import { analyzeAudioFile } from '../lib/audio.js';
 import { download, readFileText, safeFileName, timestamp } from '../lib/format.js';
 import { DEFAULT_SETTINGS } from './store.js';
 
@@ -169,6 +171,272 @@ export function createActions(store, hooks = {}) {
       } catch (error) {
         store.toast(`Chyba: ${error.message}`, 'error');
       }
+    },
+
+    /* ------------------------- Quickie import (audio) --------------------- */
+
+    /** Načte zvukové soubory z disku: vyčistí názvy, přečte tagy, změří audio. */
+    async importAudioFiles(files) {
+      const list = Array.from(files || []).filter((file) => isAudioFile(file.name));
+      if (!list.length) {
+        store.toast('To nejsou zvukové soubory – podporuju MP3, FLAC, WAV, M4A, AIFF a OGG.', 'warn');
+        return 0;
+      }
+      store.set((state) => {
+        state.ui.tab = 'quickie';
+        state.quickie.busy = true;
+      }, { silent: true });
+      store.notify();
+      let added = 0;
+      let failed = 0;
+      for (const file of list) {
+        try {
+          const meta = await readTrackFile(file);
+          store.state.quickie.items = [
+            ...store.state.quickie.items,
+            {
+              id: `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+              fileName: file.name,
+              file,
+              cleanedName: meta.cleanedName,
+              artist: meta.artist,
+              title: meta.title,
+              album: meta.album,
+              genre: meta.genre,
+              year: meta.year,
+              comments: meta.comments,
+              rating: meta.rating,
+              bpm: Number.isFinite(meta.bpm) ? meta.bpm : null,
+              key: meta.key || '',
+              tagSource: meta.tagSource,
+              hadTags: meta.hadTags,
+              duration: null,
+              analyzed: null,
+              status: 'parsed',
+              error: null,
+            },
+          ];
+          added++;
+        } catch (error) {
+          failed++;
+          store.state.quickie.items = [
+            ...store.state.quickie.items,
+            { id: `q-${Math.random().toString(36).slice(2, 8)}`, fileName: file.name, file, status: 'error', error: error.message, analyzed: null },
+          ];
+        }
+        store.notify();
+      }
+      store.state.quickie.busy = false;
+      // Automaticky změříme jen to, co nemá BPM nebo klíč (tagy i název selhaly)
+      const needsAnalysis = (item) => item.status !== 'error' && !(Number.isFinite(item.bpm) && item.key);
+      const pending = store.state.quickie.items.filter(needsAnalysis);
+      if (pending.length) {
+        await actions.analyzeQuickie(false);
+      } else {
+        store.notify();
+      }
+      store.toast(
+        `Načteno ${added} souborů${failed ? `, ${failed} se nepodařilo přečíst` : ''} – rozděl je tlačítkem „Rozdělit na playlisty“.`,
+        failed ? 'warn' : 'info',
+      );
+      return added;
+    },
+
+    /** Měří BPM a klíč z audia (Web Audio). force=false → jen chybějící. */
+    async analyzeQuickie(force = true) {
+      const items = store.state.quickie.items;
+      const targets = items.filter((item) =>
+        item.status === 'error' ? false : force ? !item.analyzed : !(Number.isFinite(item.bpm) && item.key),
+      );
+      if (!targets.length) {
+        store.toast('Není co měřit – všechny tracky už mají BPM i klíč.', 'info');
+        return 0;
+      }
+      const Ctor = globalThis.AudioContext || globalThis.webkitAudioContext;
+      if (typeof Ctor !== 'function') {
+        store.toast('Prohlížeč nemá Web Audio API – měření z audia se přeskakuje, spolehni se na tagy.', 'warn');
+        return 0;
+      }
+      store.set((state) => {
+        state.quickie.progress = { done: 0, total: targets.length };
+        state.ui.busy = true;
+      }, { silent: true });
+      refresh();
+      let ok = 0;
+      let failed = 0;
+      for (const item of targets) {
+        item.status = 'analyzing';
+        store.notify();
+        const result = await analyzeAudioFile(item.file);
+        if (result.supported && result.error) {
+          item.status = 'error';
+          item.error = result.error;
+          failed++;
+        } else if (result.supported) {
+          item.analyzed = result;
+          if (result.duration && !item.duration) item.duration = result.duration;
+          item.status = 'done';
+          ok++;
+        } else {
+          item.status = 'error';
+          item.error = 'Web Audio není k dispozici';
+          failed++;
+        }
+        store.state.quickie.progress.done++;
+        store.notify();
+      }
+      store.set((state) => {
+        state.quickie.progress = null;
+        state.quickie.busy = false;
+        state.ui.busy = false;
+      }, { silent: true });
+      refresh();
+      store.toast(`Změřeno ${ok} tracků${failed ? `, ${failed} se nepodařilo` : ''} – BPM a klíč z audia.`, failed ? 'warn' : 'info');
+      return ok;
+    },
+
+    /** Přidá rychlé tracky do knihovny a rozdělí je na playlisty (žánr + DnB subžánr). */
+    async quickieSplit() {
+      const items = store.state.quickie.items.filter((item) => item.status !== 'error');
+      if (!items.length) {
+        store.toast('Nejdřív dropni zvukové soubory do Quickie importu.', 'warn');
+        return [];
+      }
+      store.set((state) => { state.ui.busy = true; }, { silent: true });
+      refresh();
+      await nextFrame();
+      try {
+        const collection = store.state.collection;
+        const existingFiles = new Set(
+          (collection ? collection.tracks : []).map((t) => t.sourceFile).filter(Boolean),
+        );
+        const fresh = items.filter((item) => !existingFiles.has(item.fileName));
+        if (!fresh.length) {
+          store.set((state) => { state.ui.busy = false; }, { silent: true });
+          store.notify();
+          store.toast('Tyhle soubory už v knihovně jsou.', 'warn');
+          return [];
+        }
+
+        // ID nad 1 000 000 → nekolidují s TrackID z rekordbox XML
+        const usedIds = new Set((collection ? collection.tracks : []).map((t) => Number(t.id)));
+        let nextId = 1_000_001;
+        const allocateId = () => {
+          while (usedIds.has(nextId)) nextId++;
+          usedIds.add(nextId);
+          return nextId++;
+        };
+        const today = new Date().toISOString().slice(0, 10);
+
+        const newTracks = fresh.map((item) => {
+          const bpm = Number.isFinite(item.bpm)
+            ? item.bpm
+            : item.analyzed && Number.isFinite(item.analyzed.bpm)
+              ? item.analyzed.bpm
+              : null;
+          const key = item.key || (item.analyzed && item.analyzed.camelot) || '';
+          const duration = item.duration || (item.analyzed ? item.analyzed.duration : null) || 0;
+          const stars = Math.max(0, Math.min(5, Number(item.rating) || 0));
+          return {
+            id: allocateId(),
+            name: item.title || item.cleanedName || item.fileName,
+            artist: item.artist || '',
+            artistKey: '',
+            composer: '',
+            album: item.album || '',
+            grouping: '',
+            genre: item.genre || '',
+            kind: '',
+            size: null,
+            totalTime: Math.round(duration) || 0,
+            discNumber: null,
+            trackNumber: null,
+            year: item.year ? Number(item.year) || null : null,
+            bpm,
+            dateAdded: today,
+            bitRate: null,
+            sampleRate: null,
+            comments: item.comments || '',
+            playCount: 0,
+            rating: stars * 51, // rekordbox XML používá škálu 0–255
+            location: '',
+            path: '',
+            remixer: '',
+            key,
+            label: '',
+            mix: '',
+            cueCount: 0,
+            _attrs: {},
+            _children: [],
+            sourceFile: item.fileName,
+            quickie: true,
+          };
+        });
+
+        if (!collection) {
+          store.loadCollection(
+            {
+              version: '1.0.0',
+              product: { name: 'rekordbox', version: '6.0', company: 'AlphaTheta' },
+              declaredEntries: newTracks.length,
+              tracks: newTracks,
+              playlists: [],
+            },
+            `quickie import (${newTracks.length} souborů)`,
+          );
+        } else {
+          store.set((state) => {
+            state.collection.tracks = [...state.collection.tracks, ...newTracks];
+            const { stats } = buildFeatures(state.collection.tracks, {
+              energyOverrides: state.settings.energyOverrides,
+            });
+            state.collection.stats = stats;
+            state.collection.source = `${state.collection.source} + quickie`;
+            state.playlists = state.playlists.filter((p) => p.kind !== 'crate');
+            state._indexCache = null;
+          }, { silent: true });
+          store.notify();
+        }
+
+        // Rozdělení: žánr jako základ, DnB ještě podle subžánru (motor to řeší sám)
+        const settings = store.settings;
+        const config = settings.crates;
+        const crates = autoCrates(newTracks, {
+          targetSize: Number(config.targetSize) || 20,
+          minSize: Number(config.minSize) || 5,
+          threshold: Number(config.threshold) || 0.6,
+          keepSmall: Boolean(config.keepSmall),
+          allowOverlap: Boolean(config.allowOverlap),
+          weights: settings.weights,
+          options: settings.options,
+          seed: config.randomSeed || 'quickie',
+          splitByDnb: config.splitByDnb !== false,
+        });
+        store.state.playlists = store.state.playlists.filter((p) => p.kind !== 'crate');
+        const added = crates.length ? store.addPlaylists(crates) : [];
+        const covered = new Set(added.flatMap((c) => c.trackIds)).size;
+        store.set((state) => { state.ui.busy = false; }, { silent: true });
+        store.setUi({ tab: 'crates' }, { silent: true });
+        store.notify();
+        store.toast(
+          `Quickie: ${newTracks.length} tracků v knihovně → ${added.length} playlistů (${covered} tracků pokryto). Playlisty jsou v „Auto playlisty“ i v Exportu.`,
+          'info',
+        );
+        return added;
+      } catch (error) {
+        store.set((state) => { state.ui.busy = false; }, { silent: true });
+        store.notify();
+        store.toast(`Chyba při rozdělování: ${error.message}`, 'error');
+        return [];
+      }
+    },
+
+    clearQuickie() {
+      store.set((state) => {
+        state.quickie = { items: [], busy: false, progress: null };
+      }, { silent: true });
+      store.notify();
+      store.toast('Seznam Quickie importu vyčištěn (knihovna zůstává).', 'info');
     },
 
     clearCollection() {
@@ -324,6 +592,7 @@ export function createActions(store, hooks = {}) {
           options: settings.options,
           seed: config.randomSeed || 'kolekce',
           index: getIndex(),
+          splitByDnb: config.splitByDnb !== false,
         });
         store.state.playlists = store.state.playlists.filter((p) => p.kind !== 'crate');
         store.setUi({ busy: false }, { silent: true });

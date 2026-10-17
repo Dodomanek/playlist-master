@@ -2,7 +2,9 @@
 import { WEIGHT_PRESETS } from './lib/playlists.js';
 import { createStore } from './ui/store.js';
 import { createActions } from './ui/actions.js';
+import { isAudioFile } from './lib/quickie.js';
 import { collectionPanel } from './ui/collection.js';
+import { quickiePanel } from './ui/quickie.js';
 import { setPanel } from './ui/set.js';
 import { cratesPanel } from './ui/crates.js';
 import { reorderPanel } from './ui/reorder.js';
@@ -11,6 +13,7 @@ import { exportPanel } from './ui/exportPanel.js';
 const store = createStore();
 const panels = {
   collection: collectionPanel,
+  quickie: quickiePanel,
   set: setPanel,
   crates: cratesPanel,
   reorder: reorderPanel,
@@ -110,6 +113,15 @@ document.addEventListener('click', (event) => {
       case 'load-demo':
         actions.loadDemo();
         return;
+      case 'quickie-split':
+        actions.quickieSplit();
+        return;
+      case 'quickie-analyze':
+        actions.analyzeQuickie(true);
+        return;
+      case 'quickie-clear':
+        actions.clearQuickie();
+        return;
       case 'pick-seed': {
         const row = actionEl.closest('[data-track-id]');
         if (row) actions.pickSeed(row.dataset.trackId);
@@ -208,6 +220,11 @@ document.addEventListener('change', (event) => {
 
   if (target.id === 'file-input' && target.files && target.files[0]) {
     actions.importXml(target.files[0]);
+    target.value = '';
+    return;
+  }
+  if (target.id === 'quickie-input' && target.files && target.files.length) {
+    actions.importAudioFiles(Array.from(target.files));
     target.value = '';
     return;
   }
@@ -320,12 +337,24 @@ document.addEventListener(
   true,
 );
 
-// Přetažení XML/JSON souboru kamkoli do okna.
+// Přetažení souborů kamkoli do okna – zvuky jdou do Quickie importu.
 window.addEventListener('dragover', (event) => event.preventDefault());
+window.addEventListener('dragenter', () => document.body.classList.add('dragging'));
+window.addEventListener('dragleave', (event) => {
+  if (!event.relatedTarget) document.body.classList.remove('dragging');
+});
 window.addEventListener('drop', (event) => {
   event.preventDefault();
-  const file = event.dataTransfer && event.dataTransfer.files[0];
-  if (!file) return;
+  document.body.classList.remove('dragging');
+  const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+  if (!files.length) return;
+  const audio = files.filter((file) => isAudioFile(file.name));
+  if (audio.length) {
+    actions.importAudioFiles(audio);
+    store.setUi({ tab: 'quickie' });
+    return;
+  }
+  const file = files[0];
   if (file.name.toLowerCase().endsWith('.json')) actions.importProject(file);
   else actions.importXml(file);
 });

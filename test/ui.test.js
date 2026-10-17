@@ -11,6 +11,7 @@ import { parseRekordboxXml } from '../src/lib/parse.js';
 import { createStore } from '../src/ui/store.js';
 import { createActions } from '../src/ui/actions.js';
 import { collectionPanel } from '../src/ui/collection.js';
+import { quickiePanel } from '../src/ui/quickie.js';
 import { setPanel } from '../src/ui/set.js';
 import { cratesPanel } from '../src/ui/crates.js';
 import { reorderPanel } from '../src/ui/reorder.js';
@@ -21,7 +22,14 @@ const WEIGHTS_DNB = WEIGHT_PRESETS.dnb.weights;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtureText = readFileSync(resolve(here, '..', 'fixtures', 'sample-collection.xml'), 'utf8');
-const panels = { collection: collectionPanel, set: setPanel, crates: cratesPanel, reorder: reorderPanel, export: exportPanel };
+const panels = {
+  collection: collectionPanel,
+  quickie: quickiePanel,
+  set: setPanel,
+  crates: cratesPanel,
+  reorder: reorderPanel,
+  export: exportPanel,
+};
 
 function setup() {
   const store = createStore();
@@ -379,4 +387,63 @@ test('panely Export a nastavení vypíšou playlisty i ruční energie', async (
   assert.match(html, /Stáhnout XML pro rekordbox/);
   actions.resetSettings();
   assert.equal(store.settings.options.maxBpmJumpPct, 6);
+});
+
+/** Malé ID3v2.4 MP3 – jméno zmatené, tagy pěkné. */
+function quickieFile() {
+  const synchsafe = (n) => [(n >> 21) & 0x7f, (n >> 14) & 0x7f, (n >> 7) & 0x7f, n & 0x7f];
+  const frame = (id, text) => {
+    const body = Buffer.concat([Buffer.from([3]), Buffer.from(text, 'utf8')]);
+    return Buffer.concat([Buffer.from(id, 'ascii'), Buffer.from(synchsafe(body.length)), Buffer.from([0, 0]), body]);
+  };
+  const body = Buffer.concat([
+    frame('TIT2', 'Rollercoaster'),
+    frame('TPE1', 'Internoise'),
+    frame('TCON', 'Neurofunk'),
+    frame('TBPM', '174'),
+    frame('TKEY', '8A'),
+  ]);
+  const header = Buffer.concat([
+    Buffer.from('ID3'),
+    Buffer.from([4, 0, 0]),
+    Buffer.from(synchsafe(body.length)),
+  ]);
+  const buf = Buffer.concat([header, body, Buffer.alloc(64)]);
+  return { name: '01 - Internoise_-_Roller [www.site.com].mp3', arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+}
+
+test('Quickie import udělá playlisty přímo ze souborů (bez XML)', async () => {
+  const { store, actions } = setup();
+  const html = renderPanel(store, actions, 'quickie');
+  assert.match(html, /Quickie import/);
+  assert.match(html, /drop/i);
+
+  const added = await actions.importAudioFiles([quickieFile(), { name: 'poznámky.txt' }]);
+  assert.equal(added, 1, 'textový soubor se má odmítnout');
+  const item = store.state.quickie.items[0];
+  assert.equal(item.artist, 'Internoise');
+  assert.equal(item.title, 'Rollercoaster');
+  assert.equal(item.genre, 'Neurofunk');
+  assert.equal(item.bpm, 174);
+  assert.equal(item.key, '8A');
+
+  const playlists = await actions.quickieSplit();
+  assert.ok(playlists.length >= 1, 'aspoň jeden playlist');
+  assert.equal(store.tracks.length, 1);
+  const track = store.tracks[0];
+  assert.equal(track.quickie, true);
+  assert.ok(track.features && Number.isFinite(track.features.energy), 'energie se dopočítá');
+  assert.ok(playlists[0].trackIds.includes(track.id));
+  assert.equal(store.state.ui.tab, 'crates', 'po rozdělení se jde na playlisty');
+
+  // Knižuj jen knihovně, seznam souborů se dá vyčistit
+  actions.clearQuickie();
+  assert.equal(store.state.quickie.items.length, 0);
+  assert.equal(store.tracks.length, 1, 'knihovna zůstane');
+
+  // Stejný soubor znovu se nepřidá podruhé
+  await actions.importAudioFiles([quickieFile()]);
+  const again = await actions.quickieSplit();
+  assert.equal(again.length, 0, 'duplicitní soubor se nesmí přidat');
+  assert.equal(store.tracks.length, 1);
 });

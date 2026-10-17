@@ -52,11 +52,53 @@ export const MIX_STYLES = {
   full: { label: 'Celé tracky (podle skutečné délky)', seconds: null },
 };
 
-const DNB_GENRE = /(drum\s*&?\s*bass|dnb|jungle|neurofunk|liquid\s*(dnb|funk)?|halftime|jump\s*up|rollers|ragga)/i;
+// Jen skutečné DnB signaly: „rolling“ z techno a „Liquid“ z house se NEPOČÍTAJÍ.
+const DNB_GENRE = /(drum\s*&?\s*bass|drumandbass|\bdnb\b|\bd\s*&\s*b\b|jungle|ragga|neurofunk|\bneuro\b|techstep|crossbreed|darkstep|drumfunk|autonomic|liquid\s*(?:dnb|drum|bass|funk)|deep\s*(?:dnb|drum)|min(?:imal)?\s*dnb|jump\s*up|jumpup|halftime|half.?time|\brollers?\b)/i;
 
 export function isDnbTrack(track) {
-  return DNB_GENRE.test(`${track.genre || ''} ${track.comments || ''}`);
+  // oddělovače z názvů/tags bereme jako mezery, ať \b funguje i na "drum_&_bass"
+  const s = `${track.genre || ''} ${track.comments || ''} ${track.grouping || ''} ${track.name || ''}`
+    .toLowerCase()
+    .replace(/[_\-.+|]+/g, ' ');
+  return DNB_GENRE.test(s);
 }
+
+export const DNB_SUBGENRES = {
+  neurofunk: /(neurofunk|\bneuro\b|techstep|crossbreed|darkstep|neurostep)/i,
+  deep: /(deep\s*dnb|deep\s*drum.*bass|minimal\s*dnb|autonomic|drumfunk|microfunk|technoid|substep)/i,
+  liquid: /(liquid|liquid\s*funk)/i,
+  jungle: /(jungle|oldskool|old.?school.*jungle|ragga|raggajungle|breakbeat.*jungle|hardcore.*jungle|jungle.*tek)/i,
+  jumpup: /(jump.?up|jumpup|clownstep|nu.?jump.?up)/i,
+  rollers: /(rollers?|rolling)/i,
+  halftime: /(halftime|half.?time)/i,
+  other: /(drum\s*&?\s*bass|\bdnb\b)/i,
+};
+
+export function getDnbSubgenre(track) {
+  const s = `${track.genre || ''} ${track.comments || ''} ${track.grouping || ''} ${track.name || ''}`
+    .toLowerCase()
+    .replace(/[_\-.+|]+/g, ' ');
+  if (!isDnbTrack(track)) return null; // house s tagem #rolling nebo názvem „Liquid Tape“ není DnB
+  if (DNB_SUBGENRES.neurofunk.test(s)) return 'neurofunk';
+  if (DNB_SUBGENRES.deep.test(s)) return 'deep';
+  if (DNB_SUBGENRES.liquid.test(s)) return 'liquid';
+  if (DNB_SUBGENRES.jungle.test(s)) return 'jungle';
+  if (DNB_SUBGENRES.jumpup.test(s)) return 'jumpup';
+  if (DNB_SUBGENRES.halftime.test(s)) return 'halftime';
+  if (DNB_SUBGENRES.rollers.test(s)) return 'rollers';
+  return 'other';
+}
+
+export const DNB_SUBGENRE_LABELS = {
+  neurofunk: 'Neurofunk',
+  deep: 'Deep DnB',
+  liquid: 'Liquid DnB',
+  jungle: 'Jungle',
+  jumpup: 'Jump Up',
+  rollers: 'Rollers',
+  halftime: 'Halftime',
+  other: 'Ostatní DnB',
+};
 
 /** Podíl DnB tracků v sadě – používá se pro automatickou volbu stylu mixu. */
 export function dnbShare(tracks) {
@@ -368,6 +410,51 @@ function summarizeEntries(entries) {
 /* --------------------- automatické crates z celé kolekce ------------------- */
 
 /**
+ * Rozseká DnB tracky na samostatné skupiny podle subžánru (neuro, deep, jungle…),
+ * zbytek kolekce (house, techno…) jde normálním klasifikováním – nikdy se nemíchá dohromady.
+ */
+export function splitByDnbSubgenre(tracks) {
+  const groups = [];
+  const dnbOrder = Object.keys(DNB_SUBGENRE_LABELS);
+  const byKey = new Map(dnbOrder.map((key) => [key, []]));
+  const rest = [];
+  for (const track of tracks) {
+    const sub = getDnbSubgenre(track);
+    if (sub && byKey.has(sub)) byKey.get(sub).push(track);
+    else rest.push(track);
+  }
+  for (const key of dnbOrder) {
+    const list = byKey.get(key);
+    if (list.length) groups.push({ key, label: DNB_SUBGENRE_LABELS[key], tracks: list, dnb: true });
+  }
+  if (rest.length) groups.push({ key: 'rest', label: '', tracks: rest, dnb: false });
+  return groups;
+}
+
+function splitCrates(tracks, options) {
+  const seed = options.seed || 1;
+  const groups = splitByDnbSubgenre(tracks);
+  const result = [];
+  for (const group of groups) {
+    if (group.dnb) {
+      // Subžánr dostane minoritní craty pod sebe (nikam ven) a menší cílovou velikost.
+      const crates = autoCrates(group.tracks, {
+        ...options,
+        splitByDnb: false,
+        keepSmall: true,
+        targetSize: Math.min(options.targetSize || 15, 15),
+        namePrefix: group.label,
+      });
+      result.push(...crates);
+    } else {
+      result.push(...autoCrates(group.tracks, { ...options, splitByDnb: false }));
+    }
+  }
+  // ID musí být jedinečná přes skupiny – autoCrates je počítá od nuly.
+  return result.map((crate, i) => ({ ...crate, id: `crate-${i + 1}-${seed}` }));
+}
+
+/**
  * Rozseká celou kolekci na playlisty, které drží pohromadě.
  */
 export function autoCrates(tracks, options = {}) {
@@ -383,7 +470,14 @@ export function autoCrates(tracks, options = {}) {
     keepSmall = false,
     index: providedIndex = null,
     namePrefix = '',
+    splitByDnb = true,
   } = options;
+
+  // DnB výrazně převažuje → nejdřív rozdělíme podle subžánrů (neuro/deep/jungle…),
+  // aby se liquid nemíchal s neurofunkem a house se nepletl do DnB.
+  if (splitByDnb && tracks.length && dnbShare(tracks) >= 0.25) {
+    return splitCrates(tracks, options);
+  }
 
   const rng = createRng(typeof seed === 'string' ? seedFromString(seed) : seed);
   const scored = tracks.filter((t) => t.features);
@@ -665,13 +759,35 @@ export function crateName(tracks, options = {}) {
   const topKey = [...keys.entries()].sort((a, b) => b[1] - a[1])[0];
   const avgEnergy = energy / tracks.length;
   const energyWord = (ENERGY_WORDS.find(([limit]) => avgEnergy < limit) || [101, 'peak time'])[1];
-  const genre = topGenre ? topGenre[0].replace(/\b\w/g, (c) => c.toUpperCase()) : 'Mix';
+
+  // Prefer DnB subgenre if majority are DnB
+  const subCounts = new Map();
+  for (const t of tracks) {
+    const s = getDnbSubgenre(t);
+    if (s) subCounts.set(s, (subCounts.get(s) || 0) + 1);
+  }
+  let genreLabel = null;
+  if (subCounts.size) {
+    const topSub = [...subCounts.entries()].sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0]);
+    })[0];
+    if (topSub && topSub[1] >= Math.max(2, tracks.length * 0.5)) {
+      genreLabel = DNB_SUBGENRE_LABELS[topSub[0]] || topSub[0].replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+  }
+  if (!genreLabel) {
+    genreLabel = topGenre ? topGenre[0].replace(/\b\w/g, (c) => c.toUpperCase()) : 'Mix';
+  }
+
   const bpmPart = bpms.length
     ? `${Math.round(Math.min(...bpms))}–${Math.round(Math.max(...bpms))} BPM`
     : 'BPM ?';
   const keyPart = topKey && topKey[1] >= Math.max(2, tracks.length * 0.25) ? ` · ${topKey[0]}` : '';
-  const prefix = options.prefix ? `${options.prefix} · ` : '';
-  return `${prefix}${genre} · ${bpmPart}${keyPart} · ${energyWord}`;
+  // Prefix (např. subžánr) už nemusíme opakovat, když se stejně zobrazí ze skupiny tracků
+  const showPrefix = options.prefix && normalizeText(options.prefix) !== normalizeText(genreLabel);
+  const prefix = showPrefix ? `${options.prefix} · ` : '';
+  return `${prefix}${genreLabel} · ${bpmPart}${keyPart} · ${energyWord}`;
 }
 
 /** Přehled přechodů pro UI/CLI report. */

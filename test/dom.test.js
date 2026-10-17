@@ -229,3 +229,30 @@ test('aplikace se nastartuje a odkliká celý tok: demo → playlisty → export
   assert.match(dnbSetHtml, /29 tracků/);
   assert.match(document.getElementById('status').textContent, /DnB demo/);
 });
+
+test('Quickie tab má dropzonu a Auto playlisty umí rozdělit DnB podle subžánru', async () => {
+  // tab Quickie: dropzona, file input, tlačítka
+  click(document.querySelector('#tabs .tab[data-tab="quickie"]'));
+  await tick();
+  const html = document.querySelector('.panel[data-panel="quickie"]').innerHTML;
+  assert.match(html, /Quickie import/);
+  assert.ok(document.querySelector('#quickie-drop'), 'chybí dropzona');
+  assert.ok(document.querySelector('#quickie-input[multiple]'), 'chybí file input pro více souborů');
+  assert.match(html, /vyčistí zmatené názvy/);
+  assert.match(html, /Zatím žádné soubory/);
+
+  // auto playlisty: přepínač rozdělení DnB je zapnutý ve výchozím nastavení
+  click(document.getElementById('dnb-demo-btn'));
+  await tick(250);
+  click(document.querySelector('#tabs .tab[data-tab="crates"]'));
+  await tick();
+  const checkbox = document.querySelector('.panel[data-panel="crates"] input[data-setting="crates.splitByDnb"]');
+  assert.ok(checkbox, 'chybí přepínač „Rozdělit DnB podle subžánru“');
+  assert.equal(checkbox.checked, true, 'výchozí stav má být zapnutý');
+
+  click(document.querySelector('.panel[data-panel="crates"] [data-action="build-crates"]'));
+  await tick(900);
+  const cratesHtml = document.querySelector('.panel[data-panel="crates"]').innerHTML;
+  assert.match(cratesHtml, /Vygenerované playlisty/);
+  assert.match(cratesHtml, /(Neurofunk|Jungle|Liquid|Jump Up|Rollers|Halftime)/, 'názvy playlistů mají nést subžánry DnB');
+});

@@ -10,8 +10,11 @@ import {
   autoCrates,
   buildBpmIndex,
   buildSet,
+  DNB_SUBGENRE_LABELS,
   dnbShare,
   estimateTrackCount,
+  getDnbSubgenre,
+  isDnbTrack,
   MIX_STYLES,
   playlistScore,
   reorderPlaylist,
@@ -209,4 +212,54 @@ test('DnB preset staví hlavně na klíči, energii a subžánru', () => {
   assert.ok(weights.energy >= weights.genre);
   assert.ok(weights.tags >= 10, 'subžánr v tagách má váhu');
   assert.match(WEIGHT_PRESETS.dnb.label, /DnB/);
+});
+
+test('pozná DnB subžánry (neuro, deep, jungle…) i podle tagů v komentáři', () => {
+  const mk = (genre, comments = '', name = '') => ({ genre, comments, name });
+  assert.equal(getDnbSubgenre(mk('Neurofunk')), 'neurofunk');
+  assert.equal(getDnbSubgenre(mk('Drum & Bass', '#neurofunk energy 8')), 'neurofunk');
+  assert.equal(getDnbSubgenre(mk('Deep DnB')), 'deep');
+  assert.equal(getDnbSubgenre(mk('Jungle')), 'jungle');
+  assert.equal(getDnbSubgenre(mk('Drum & Bass', '#liquid')), 'liquid');
+  assert.equal(getDnbSubgenre(mk('Drum & Bass', 'jump up vibes')), 'jumpup');
+  assert.equal(getDnbSubgenre(mk('Drum & Bass', '#rollers')), 'rollers');
+  assert.equal(getDnbSubgenre(mk('Drum & Bass')), 'other');
+  assert.equal(getDnbSubgenre(mk('House')), null, 'house není DnB');
+  assert.equal(getDnbSubgenre(mk('Melodic Techno', '#rolling, energy 9')), null, 'techno #rolling není DnB');
+  assert.equal(getDnbSubgenre(mk('Deep House', '#deep', 'Liquid Tape')), null, 'název Liquid není DnB');
+  assert.equal(isDnbTrack(mk('Progressive House', '#rolling')), false);
+  assert.equal(isDnbTrack(mk('Drum & Bass', '')), true);
+  assert.equal(DNB_SUBGENRE_LABELS.neurofunk, 'Neurofunk');
+});
+
+test('autoCrates rozdělí DnB na subžánry, dům a techno nechá zvlášť', () => {
+  const dnb = makeDnbCollection(45);
+  // ID z fixture a z DnB sady se překrývají (1…45) – posuneme je, jinak mapovací test lže
+  const house = tracks.slice(0, 40).map((t) => ({ ...t, id: t.id + 10_000 }));
+  buildFeatures(house);
+  const mixed = [...dnb, ...house];
+  const crates = autoCrates(mixed, {
+    targetSize: 20,
+    minSize: 5,
+    threshold: 0.6,
+    seed: 11,
+    weights: WEIGHT_PRESETS.genre.weights,
+  });
+
+  const labels = crates.map((c) => c.name).join('\n');
+  assert.match(labels, /Neurofunk/, 'názvy musí obsahovat neuro craty');
+  assert.match(labels, /(Jungle|Liquid|Jump Up|Rollers|Halftime)/, 'a aspoň jeden další subžánr');
+  assert.ok(crates.length >= 6, `jen ${crates.length} playlistů`);
+
+  // Žádný playlist nesmí místit subžánry DnB ani DnB s HOUSE/TECHNO
+  const groupOf = new Map(mixed.map((t) => [t.id, getDnbSubgenre(t) || 'non-dnb']));
+  for (const crate of crates) {
+    const groups = new Set(crate.trackIds.map((id) => groupOf.get(id)));
+    assert.equal(groups.size, 1, `playlist „${crate.name}“ míchá skupiny: ${[...groups].join(', ')}`);
+  }
+
+  // Žádný track nesmí chybět
+  const covered = new Set(crates.flatMap((c) => c.trackIds));
+  assert.equal(covered.size, mixed.length, `pokryto ${covered.size} z ${mixed.length}`);
+  assert.equal(new Set(crates.flatMap((c) => c.trackIds)).size, mixed.length, 'bez duplicit');
 });

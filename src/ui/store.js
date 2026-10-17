@@ -29,6 +29,8 @@ export const DEFAULT_SETTINGS = {
     keepSmall: false,
     allowOverlap: false,
     randomSeed: 'kolekce',
+    // DnB rozdělit samostatně na neuro/deep/jungle/… – liquid se neplete s neurofunk
+    splitByDnb: true,
   },
   export: {
     folderName: '',
@@ -49,7 +51,8 @@ function loadSettings() {
       weights: { ...DEFAULT_SETTINGS.weights, ...(parsed.weights || {}) },
       options: { ...DEFAULT_SETTINGS.options, ...(parsed.options || {}) },
       set: { ...DEFAULT_SETTINGS.set, ...(parsed.set || {}) },
-      crates: { ...DEFAULT_SETTINGS.crates, ...(parsed.crates || {}) },
+      crates: { ...DEFAULT_SETTINGS.crates, ...(parsed.crates || {}),
+        splitByDnb: parsed.crates && parsed.crates.splitByDnb != null ? parsed.crates.splitByDnb : true },
       export: { ...DEFAULT_SETTINGS.export, ...(parsed.export || {}) },
       energyOverrides: parsed.energyOverrides || {},
     };
@@ -78,6 +81,8 @@ export function createStore() {
     playlists: [], // vygenerované playlisty
     // Rozsah práce: celá kolekce, nebo jen vybrané playlisty (importované i vygenerované)
     scope: { mode: 'all', keys: [] },
+    // Quickie import – soubory načtené rovnou z disku (bez rekordbox XML)
+    quickie: { items: [], busy: false, progress: null },
     settings,
     ui: {
       tab: 'collection',

@@ -682,3 +682,74 @@ details.settings[open] > summary {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   z-index: 50;
 }
+
+/* Quickie import */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 26px 18px;
+  border: 2px dashed rgba(139, 92, 246, 0.45);
+  border-radius: 12px;
+  background: rgba(139, 92, 246, 0.06);
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dropzone.over,
+body.dragging .dropzone {
+  border-color: var(--accent);
+  background: rgba(139, 92, 246, 0.16);
+}
+.dropzone .dz-icon {
+  font-size: 30px;
+  color: var(--accent-soft);
+}
+.dropzone .dz-text {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+.progress {
+  margin-top: 12px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-soft));
+  transition: width 0.25s ease;
+}
+.dot { font-size: 15px; }
+.dot.good { color: var(--good); }
+.dot.warn { color: var(--warn); }
+.dot.bad { color: var(--bad); }
+table.quickie {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+table.quickie th,
+table.quickie td {
+  padding: 7px 9px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+table.quickie th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+table.quickie tr.row-bad td { opacity: 0.6; }
+table.quickie .src {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 10.5px;
+  color: var(--accent-soft);
+  border: 1px solid rgba(139, 92, 246, 0.5);
+  border-radius: 4px;
+  padding: 0 4px;
+}
