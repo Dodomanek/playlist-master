@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rekordbox Set Builder – playlisty z tracků, které k sobě pasují</title>
+    <meta
+      name="description"
+      content="Načte XML export z rekordboxu, spočítá harmonickou shodu (Camelot, BPM, energie, styl) a vygeneruje playlisty/sety, které jde importovat zpět do rekordboxu."
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">◎</span>
+          <div>
+            <h1>Rekordbox Set Builder</h1>
+            <p class="tagline">Playlisty z tracků, které k sobě pasují – klíč, BPM, energie, styl</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <label class="btn primary file-btn">
+            Načíst rekordbox XML
+            <input type="file" id="file-input" accept=".xml,text/xml,application/xml" />
+          </label>
+          <button class="btn" id="demo-btn" title="Načte ukázkovou kolekci 180 tracků ze všech stylů">Demo data</button>
+          <button class="btn" id="dnb-demo-btn" title="140 DnB tracků (liquid, rollers, neurofunk, jump up, halftime, jungle)">
+            Demo DnB
+          </button>
+          <span class="status" id="status">Zatím není načtená žádná kolekce</span>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab" data-tab="collection">Kolekce</button>
+        <button class="tab" data-tab="set">Set z tracku</button>
+        <button class="tab" data-tab="crates">Auto playlisty</button>
+        <button class="tab" data-tab="reorder">Uspořádat playlist</button>
+        <button class="tab" data-tab="export">Export a nastavení</button>
+      </nav>
+
+      <main id="panels">
+        <section class="panel" data-panel="collection"></section>
+        <section class="panel" data-panel="set"></section>
+        <section class="panel" data-panel="crates"></section>
+        <section class="panel" data-panel="reorder"></section>
+        <section class="panel" data-panel="export"></section>
+      </main>
+
+      <footer class="footer">
+        <span>
+          Vše se počítá lokálně v prohlížeči – XML z rekordboxu nikam neodchází. Pracuje se s XML exportem
+          (File → Export collection in xml format), ne s master.db.
+        </span>
+        <a href="https://rekordbox.com" target="_blank" rel="noreferrer">rekordbox.com</a>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
